@@ -1,0 +1,202 @@
+import SwiftUI
+import SpriteKit
+
+struct ContentView: View {
+    // MARK: - Zustände für die verschiedenen Views
+    @State private var isGameActive = false
+    @State private var showLeaderboard = false
+    @State private var showSettings = false
+    
+    // Die GameScene (als SpriteKit-Szene), initialisiert mit der aktuellen Bildschirmgröße
+    @State private var gameScene: GameScene = {
+        let scene = GameScene(size: UIScreen.main.bounds.size)
+        scene.scaleMode = .resizeFill
+        return scene
+    }()
+    
+    var body: some View {
+        ZStack {
+            if isGameActive {
+                // Das SpriteKit-Spiel wird als SpriteView eingebettet
+                SpriteView(scene: gameScene)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                
+                // Overlay-Steuerelemente im Spiel (oben links: Pause, Leaderboard und Settings)
+                VStack {
+                    HStack {
+                        // Pause/Resume-Button
+                        Button(action: {
+                            gameScene.isPaused.toggle()
+                        }) {
+                            Image(systemName: gameScene.isPaused ? "play.circle.fill" : "pause.circle.fill")
+                                .resizable()
+                                .frame(width: 50, height: 50)
+                                .padding()
+                        }
+                        Spacer()
+                        // Leaderboard-Button
+                        Button(action: {
+                            withAnimation {
+                                showLeaderboard.toggle()
+                            }
+                        }) {
+                            Image(systemName: "list.number")
+                                .resizable()
+                                .frame(width: 50, height: 50)
+                                .padding()
+                        }
+                        // Settings-Button
+                        Button(action: {
+                            withAnimation {
+                                showSettings.toggle()
+                            }
+                        }) {
+                            Image(systemName: "gearshape.fill")
+                                .resizable()
+                                .frame(width: 50, height: 50)
+                                .padding()
+                        }
+                    }
+                    Spacer()
+                }
+                
+                // Overlay: Leaderboard
+                if showLeaderboard {
+                    LeaderboardView(showLeaderboard: $showLeaderboard)
+                        .transition(.opacity)
+                }
+                
+                // Overlay: Settings
+                if showSettings {
+                    SettingsView(showSettings: $showSettings)
+                        .transition(.move(edge: .bottom))
+                }
+            } else {
+                // Hauptmenü vor Spielstart
+                VStack(spacing: 20) {
+                    Text("Ghost Run Challenge")
+                        .font(.largeTitle)
+                        .bold()
+                    Button("Start Game") {
+                        // Erzeuge eine neue GameScene (zurücksetzen des Spiels)
+                        gameScene = GameScene(size: UIScreen.main.bounds.size)
+                        gameScene.scaleMode = .resizeFill
+                        isGameActive = true
+                    }
+                    Button("Leaderboard") {
+                        withAnimation {
+                            showLeaderboard = true
+                        }
+                    }
+                    Button("Settings") {
+                        withAnimation {
+                            showSettings = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Leaderboard Overlay
+
+struct LeaderboardView: View {
+    @Binding var showLeaderboard: Bool
+    
+    // Beispielhafte (statische) Leaderboard-Daten; in einem echten Projekt würden diese z. B. von einem Server oder lokal persistiert kommen.
+    let leaderboardData: [(name: String, time: Double)] = [
+        ("Alice", 12.34),
+        ("Bob", 13.45),
+        ("Charlie", 14.56),
+        ("Diana", 15.67),
+        ("Eve", 16.78)
+    ]
+    
+    var body: some View {
+        VStack {
+            HStack {
+                Spacer()
+                // Schließen-Button
+                Button(action: {
+                    withAnimation {
+                        showLeaderboard = false
+                    }
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .resizable()
+                        .frame(width: 40, height: 40)
+                        .padding()
+                }
+            }
+            Text("Leaderboard")
+                .font(.title)
+                .padding()
+            List(0..<leaderboardData.count, id: \.self) { index in
+                HStack {
+                    Text("\(index + 1). \(leaderboardData[index].name)")
+                    Spacer()
+                    Text(String(format: "%.2f s", leaderboardData[index].time))
+                }
+            }
+            .listStyle(PlainListStyle())
+            Spacer()
+        }
+        .background(Color.white.opacity(0.95))
+        .cornerRadius(10)
+        .padding()
+    }
+}
+
+// MARK: - Settings Overlay
+
+struct SettingsView: View {
+    @Binding var showSettings: Bool
+    @State private var selectedColor: Color = .red
+    @State private var gameSpeed: Double = 2.0
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Settings")
+                .font(.title)
+            HStack {
+                Text("Player Color:")
+                ColorPicker("", selection: $selectedColor)
+                    .labelsHidden()
+            }
+            HStack {
+                Text("Game Speed:")
+                Slider(value: $gameSpeed, in: 1...5, step: 0.5)
+                Text(String(format: "%.1fx", gameSpeed))
+            }
+            HStack(spacing: 20) {
+                Button("Apply") {
+                    // Übertrage die neuen Einstellungen an die GameScene mittels NotificationCenter
+                    NotificationCenter.default.post(name: Notification.Name("UpdateGameSettings"),
+                                                    object: nil,
+                                                    userInfo: ["playerColor": UIColor(selectedColor),
+                                                               "gameSpeed": gameSpeed])
+                    withAnimation {
+                        showSettings = false
+                    }
+                }
+                Button("Cancel") {
+                    withAnimation {
+                        showSettings = false
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.95))
+        .cornerRadius(10)
+        .padding()
+    }
+}
+
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+    }
+}
