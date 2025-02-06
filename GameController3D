@@ -1,0 +1,230 @@
+import Foundation
+import SceneKit
+import SwiftUI
+
+/// Ein einfacher Datentyp zur Aufzeichnung eines Ghost‑Frames (Zeit und Position)
+struct GhostFrame {
+    let time: TimeInterval
+    let position: SCNVector3
+}
+
+/// GameController3D verwaltet die SceneKit‑Szene und alle Spielmechaniken
+class GameController3D: NSObject, ObservableObject, SCNSceneRendererDelegate, SCNPhysicsContactDelegate {
+    
+    // MARK: - Öffentlich über SwiftUI beobachtbare Variablen
+    @Published var score: Int = 0
+    
+    // MARK: - SceneKit-Kernelemente
+    let scene: SCNScene
+    let cameraNode: SCNNode
+    
+    // Der Spieler (roter 3D-Charakter)
+    let playerNode: SCNNode
+    // Der Ghost-Charakter (transparent, zeigt den vorherigen Pfad)
+    let ghostNode: SCNNode
+    
+    // Spielstatus
+    var isGameOver = false
+    var lastUpdateTime: TimeInterval = 0
+    
+    // Für den Ghost-Runner: Aufzeichnung der Positionen
+    var recording: Bool = true
+    var ghostFrames: [GhostFrame] = []
+    
+    // MARK: - Initialisierung
+    override init() {
+        // Erstelle die Szene
+        scene = SCNScene()
+        
+        // Kamera erstellen und positionieren
+        cameraNode = SCNNode()
+        let camera = SCNCamera()
+        camera.fieldOfView = 60
+        cameraNode.camera = camera
+        // Anfangsposition der Kamera (wird im Update fortlaufend angepasst)
+        cameraNode.position = SCNVector3(0, 5, 15)
+        scene.rootNode.addChildNode(cameraNode)
+        
+        // Lichtquellen hinzufügen
+        let lightNode = SCNNode()
+        let light = SCNLight()
+        light.type = .omni
+        light.intensity = 800
+        lightNode.light = light
+        lightNode.position = SCNVector3(0, 10, 10)
+        scene.rootNode.addChildNode(lightNode)
+        
+        let ambientLightNode = SCNNode()
+        ambientLightNode.light = SCNLight()
+        ambientLightNode.light?.type = .ambient
+        ambientLightNode.light?.color = UIColor.darkGray
+        scene.rootNode.addChildNode(ambientLightNode)
+        
+        // Boden erstellen
+        let floor = SCNFloor()
+        floor.reflectivity = 0.25
+        let floorMaterial = SCNMaterial()
+        // Nutze eine Bilddatei ("grass") oder ersetze durch eine Farbe, z. B.:
+        floorMaterial.diffuse.contents = UIImage(named: "grass") ?? UIColor.green
+        floor.materials = [floorMaterial]
+        let floorNode = SCNNode(geometry: floor)
+        floorNode.physicsBody = SCNPhysicsBody.static()
+        scene.rootNode.addChildNode(floorNode)
+        
+        // Spieler erstellen (als roter Kasten)
+        let playerGeometry = SCNBox(width: 1, height: 2, length: 1, chamferRadius: 0.1)
+        playerGeometry.firstMaterial?.diffuse.contents = UIColor.red
+        playerNode = SCNNode(geometry: playerGeometry)
+        playerNode.position = SCNVector3(0, 1, 0)
+        playerNode.physicsBody = SCNPhysicsBody.dynamic()
+        playerNode.physicsBody?.mass = 1.0
+        playerNode.physicsBody?.restitution = 0.1
+        // Kategorie 1 für den Spieler
+        playerNode.physicsBody?.categoryBitMask = 1
+        // Kontakt-Test: Mit Kategorie 2 (Hindernisse)
+        playerNode.physicsBody?.contactTestBitMask = 2
+        scene.rootNode.addChildNode(playerNode)
+        
+        // Ghost-Charakter (verwende dieselbe Geometrie, aber mit reduzierter Deckkraft)
+        ghostNode = SCNNode(geometry: playerGeometry.copy() as? SCNGeometry)
+        ghostNode.opacity = 0.5
+        ghostNode.position = playerNode.position
+        scene.rootNode.addChildNode(ghostNode)
+        
+        super.init()
+        
+        // Physics Delegate setzen
+        scene.physicsWorld.contactDelegate = self
+        
+        // Starte das periodische Erzeugen von Hindernissen
+        spawnObstacles()
+        
+        // Beginne mit der Aufzeichnung für den Ghost-Runner
+        recording = true
+        ghostFrames = []
+    }
+    
+    // MARK: - Spieleraktionen
+    
+    /// Löst einen Sprung aus, sofern der Spieler am Boden steht.
+    func playerJump() {
+        guard let body = playerNode.physicsBody else { return }
+        // Falls die vertikale Geschwindigkeit nahe Null ist (d. h. der Spieler steht)
+        if abs(body.velocity.y) < 0.1 {
+            // Kraft nach oben (Passe den Wert je nach gewünschter Sprunghöhe an)
+            body.applyForce(SCNVector3(0, 300, 0), asImpulse: true)
+        }
+    }
+    
+    /// Setzt das Spiel zurück.
+    func restartGame() {
+        isGameOver = false
+        score = 0
+        // Spieler zurücksetzen
+        playerNode.position = SCNVector3(0, 1, 0)
+        playerNode.physicsBody?.clearAllForces()
+        playerNode.physicsBody?.velocity = SCNVector3Zero
+        // Ghost-Runner-Daten löschen
+        ghostFrames = []
+        ghostNode.position = playerNode.position
+    }
+    
+    // MARK: - Hindernisse
+    
+    /// Erzeugt periodisch Hindernisse (als blaue Boxen), die auf den Spieler zufahren.
+    func spawnObstacles() {
+        // Erzeuge alle 3 Sekunden ein Hindernis.
+        let spawnAction = SCNAction.run { [weak self] _ in
+            self?.createObstacle()
+        }
+        let waitAction = SCNAction.wait(duration: 3.0)
+        let sequence = SCNAction.sequence([spawnAction, waitAction])
+        let repeatAction = SCNAction.repeatForever(sequence)
+        scene.rootNode.runAction(repeatAction)
+    }
+    
+    /// Erzeugt ein einzelnes Hindernis und bewegt es in Richtung des Spielers.
+    func createObstacle() {
+        let box = SCNBox(width: 1, height: 1, length: 1, chamferRadius: 0.05)
+        box.firstMaterial?.diffuse.contents = UIColor.blue
+        let obstacleNode = SCNNode(geometry: box)
+        
+        // Positioniere das Hindernis weit vor dem Spieler entlang der z-Achse.
+        let randomX = Float.random(in: -3...3)
+        obstacleNode.position = SCNVector3(randomX, 0.5, -20)
+        obstacleNode.physicsBody = SCNPhysicsBody.static()
+        obstacleNode.physicsBody?.categoryBitMask = 2  // Kategorie 2: Hindernisse
+        scene.rootNode.addChildNode(obstacleNode)
+        
+        // Bewege das Hindernis in Richtung des Spielers und entferne es danach.
+        let moveAction = SCNAction.moveBy(x: 0, y: 0, z: 25, duration: 5)
+        let removeAction = SCNAction.removeFromParentNode()
+        obstacleNode.runAction(SCNAction.sequence([moveAction, removeAction]))
+    }
+    
+    // MARK: - SCNSceneRendererDelegate
+    
+    /// Wird in jedem Frame aufgerufen – hier wird der Spieler fortlaufend vorwärts bewegt,
+    /// die Kamera angepasst und der Ghost-Pfad aufgezeichnet.
+    func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
+        if lastUpdateTime == 0 {
+            lastUpdateTime = time
+        }
+        let deltaTime = time - lastUpdateTime
+        lastUpdateTime = time
+        
+        if !isGameOver {
+            // Spieler bewegt sich kontinuierlich entlang der negativen z-Achse.
+            let forwardSpeed: Float = 5.0
+            playerNode.position.z -= forwardSpeed * Float(deltaTime)
+            // Score entspricht der absoluten z-Position (je weiter, desto höher)
+            score = Int(abs(playerNode.position.z))
+            
+            // Kamera folgt dem Spieler (leicht nach oben versetzt)
+            cameraNode.position.z = playerNode.position.z + 15
+            cameraNode.position.x = playerNode.position.x
+            cameraNode.position.y = playerNode.position.y + 5
+            
+            // Ghost-Aufzeichnung: Speichere den aktuellen Frame und aktualisiere den Ghost-Charakter
+            if recording {
+                let frame = GhostFrame(time: time, position: playerNode.position)
+                ghostFrames.append(frame)
+                // Für einen leichten Verzögerungseffekt wird der Ghost-Charakter mit einem leichten Versatz aktualisiert
+                if ghostFrames.count > 10 {
+                    ghostNode.position = ghostFrames[ghostFrames.count - 10].position
+                }
+            }
+        }
+    }
+    
+    // MARK: - SCNPhysicsContactDelegate
+    
+    /// Wird aufgerufen, wenn ein physikalischer Kontakt erkannt wird.
+    func physicsWorld(_ world: SCNPhysicsWorld, didBegin contact: SCNPhysicsContact) {
+        // Wenn der Spieler (Kategorie 1) mit einem Hindernis (Kategorie 2) kollidiert, ist das Game Over.
+        let maskA = contact.nodeA.physicsBody?.categoryBitMask ?? 0
+        let maskB = contact.nodeB.physicsBody?.categoryBitMask ?? 0
+        if (maskA == 1 && maskB == 2) || (maskA == 2 && maskB == 1) {
+            gameOver()
+        }
+    }
+    
+    /// Beendet das Spiel, zeigt eine Game Over-Nachricht und stoppt die Bewegung.
+    func gameOver() {
+        isGameOver = true
+        recording = false
+        
+        // Erstelle einen 3D-Text als Game Over-Anzeige
+        let gameOverText = SCNText(string: "Game Over", extrusionDepth: 1)
+        gameOverText.font = UIFont.boldSystemFont(ofSize: 10)
+        gameOverText.firstMaterial?.diffuse.contents = UIColor.red
+        let textNode = SCNNode(geometry: gameOverText)
+        // Positioniere den Text in der Nähe des Spielers
+        textNode.position = SCNVector3(playerNode.position.x - 5, playerNode.position.y + 5, playerNode.position.z)
+        textNode.scale = SCNVector3(0.5, 0.5, 0.5)
+        scene.rootNode.addChildNode(textNode)
+        
+        // Stoppe den Spieler
+        playerNode.physicsBody?.velocity = SCNVector3Zero
+    }
+}
