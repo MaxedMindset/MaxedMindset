@@ -200,3 +200,55 @@ struct ContentView_Previews: PreviewProvider {
         ContentView()
     }
 }
+
+import SwiftUI
+import SceneKit
+
+struct ContentView: View {
+    // Der GameController3D verwaltet die SceneKit‑Szene und alle Logiken
+    @StateObject var gameController = GameController3D()
+    
+    var body: some View {
+        ZStack {
+            // SceneView zeigt die SceneKit‑Szene an.
+            SceneView(
+                scene: gameController.scene,
+                pointOfView: gameController.cameraNode,
+                options: [.autoenablesDefaultLighting, .allowsCameraControl],
+                delegate: gameController
+            )
+            .ignoresSafeArea()
+            
+            // Overlay: Score-Anzeige und Restart-Button
+            VStack {
+                HStack {
+                    Text("Score: \(gameController.score)")
+                        .padding(8)
+                        .background(Color.black.opacity(0.6))
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    Spacer()
+                    Button("Restart") {
+                        gameController.restartGame()
+                    }
+                    .padding(8)
+                    .background(Color.black.opacity(0.6))
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                }
+                .padding()
+                Spacer()
+            }
+        }
+        // Durch einen Tap auf den Bildschirm wird der Spieler springen
+        .onTapGesture {
+            gameController.playerJump()
+        }
+    }
+}
+
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+    }
+}
