@@ -1,6 +1,6 @@
 import SpriteKit
 
-/// Ein Datenmodell für einen Frame im Ghost-Lauf
+/// Datenmodell für einen Frame im Ghost-Lauf
 struct GhostFrame: Codable {
     let time: TimeInterval   // Zeit (in Sekunden) seit Laufstart
     let position: CGPoint    // Position des Spielers zu diesem Zeitpunkt
@@ -12,22 +12,24 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     var player: SKSpriteNode!
     var ghost: SKSpriteNode?          // Darstellung des Ghost-Laufs (blau, halbtransparent)
     
-    /// Aufzeichnung des aktuellen Laufs (Werte werden pro Frame gesammelt)
+    /// Aufzeichnung des aktuellen Laufs (pro Frame werden Daten gespeichert)
     var currentGhostFrames: [GhostFrame] = []
-    
-    /// Beste (gespeicherte) Ghost‑Frames aus dem bisherigen besten Lauf
+    /// Beste (gespeicherte) Ghost‑Frames aus dem bisherigen Lauf
     var bestGhostFrames: [GhostFrame] = []
     
-    /// Zeitpunkt, ab dem der aktuelle Lauf gestartet wurde
+    /// Zeitpunkt des Laufstartes
     var runStartTime: TimeInterval = 0
     var recording: Bool = true
     
-    // MARK: - UI-Elemente
+    // MARK: - UI-Elemente (als SpriteKit-Labels)
     var currentTimeLabel: SKLabelNode!
     var bestTimeLabel: SKLabelNode!
     
     /// Beste Zeit (niedrigster Wert) des gespeicherten Laufs
     var bestTime: TimeInterval = 0
+    
+    // Zusätzliche Variable für die Spielgeschwindigkeit (wird in der ContentView via Settings angepasst)
+    var gameSpeed: CGFloat = 2.0
 
     // MARK: - Scene Lifecycle
     override func didMove(to view: SKView) {
@@ -42,11 +44,17 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         runStartTime = 0
         recording = true
         currentGhostFrames = []
+        
+        // Observer für Settings-Änderungen hinzufügen
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(updateGameSettings(_:)),
+                                               name: Notification.Name("UpdateGameSettings"),
+                                               object: nil)
     }
     
-    // MARK: - Setup Funktionen
+    // MARK: - Setup-Funktionen
     
-    /// Erzeugt einen einfachen Boden (als SKSpriteNode) für den Spieler
+    /// Erzeugt einen einfachen Boden als SKSpriteNode
     func setupGround() {
         let ground = SKSpriteNode(color: .brown, size: CGSize(width: self.size.width * 3, height: 40))
         ground.position = CGPoint(x: self.size.width, y: 100)
@@ -55,7 +63,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         addChild(ground)
     }
     
-    /// Initialisiert den Spieler als rote Box
+    /// Initialisiert den Spieler (rote Box)
     func setupPlayer() {
         player = SKSpriteNode(color: .red, size: CGSize(width: 40, height: 40))
         player.position = CGPoint(x: 100, y: 150)
@@ -82,7 +90,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         addChild(bestTimeLabel)
     }
     
-    /// Lädt den besten Ghost-Lauf (falls vorhanden) aus UserDefaults und erstellt den Ghost-Node
+    /// Lädt den besten Ghost-Lauf (falls vorhanden) aus UserDefaults
     func loadBestGhostRun() {
         if let data = UserDefaults.standard.data(forKey: "bestGhostRun") {
             let decoder = JSONDecoder()
@@ -96,7 +104,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         }
     }
     
-    /// Erzeugt den Ghost-Node (blaue Box) und startet die Animation basierend auf den gespeicherten GhostFrames
+    /// Erzeugt den Ghost-Node (blaue Box) und startet die Animation anhand der gespeicherten GhostFrames
     func setupGhost() {
         ghost?.removeFromParent()
         ghost = SKSpriteNode(color: .blue, size: CGSize(width: 40, height: 40))
@@ -108,7 +116,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         runGhostAnimation()
     }
     
-    /// Erzeugt eine SKAction-Sequenz, mit der der Ghost-Node gemäß den gespeicherten Frames animiert wird
+    /// Erzeugt eine SKAction-Sequenz, um den Ghost-Node anhand der gespeicherten Frames zu animieren
     func runGhostAnimation() {
         guard bestGhostFrames.count > 0, let ghost = ghost else { return }
         ghost.removeAllActions()
@@ -118,7 +126,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
             let frame = bestGhostFrames[i]
             var duration: TimeInterval = 0
             if i == 0 {
-                duration = frame.time  // Falls ein anfängliches Warten nötig ist
+                duration = frame.time
             } else {
                 duration = frame.time - bestGhostFrames[i - 1].time
             }
@@ -130,7 +138,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     
     // MARK: - Touch Handling
     
-    /// Bei Touch-Eingabe springt der Spieler, sofern er nahezu stillsteht (also auf dem Boden ist)
+    /// Bei Touch-Eingabe springt der Spieler, sofern er auf dem Boden ist
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         if let body = player.physicsBody, abs(body.velocity.dy) < 1.0 {
             body.applyImpulse(CGVector(dx: 0, dy: 300))
@@ -140,29 +148,24 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     // MARK: - Game Loop
     
     override func update(_ currentTime: TimeInterval) {
-        // Initialisierung des Startzeitpunkts des Laufs
         if runStartTime == 0 {
             runStartTime = currentTime
         }
         
-        // Aktualisierung der Labels
         let elapsed = currentTime - runStartTime
         currentTimeLabel.text = String(format: "Zeit: %.2f s", elapsed)
         bestTimeLabel.text = String(format: "Best: %.2f s", bestTime)
         
-        // Aufzeichnung des Spieler-Status für den Ghost-Lauf
+        // Aufzeichnung des Spielerstatus für den Ghost-Lauf
         if recording {
             let frame = GhostFrame(time: elapsed, position: player.position)
             currentGhostFrames.append(frame)
         }
         
-        // Simuliere konstante Vorwärtsbewegung (Endless-Runner-Effekt)
-        player.position.x += 2
+        // Konstante Vorwärtsbewegung basierend auf der einstellbaren gameSpeed
+        player.position.x += gameSpeed
         
-        // (Optional) Falls die Szene größer als der Bildschirm ist: Verschiebe die Kamera mit dem Spieler
-        // Hierzu könnte man einen SKCameraNode einsetzen.
-        
-        // Überprüfe, ob der Spieler vom Bildschirm gefallen ist oder das Levelende erreicht hat
+        // Überprüfe, ob der Spieler das Spielfeld verlässt
         if player.position.y < -50 || player.position.x > self.size.width * 2 {
             endRun()
         }
@@ -176,7 +179,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         let runTime = currentGhostFrames.last?.time ?? 0
         print("Lauf beendet – Zeit: \(runTime) s")
         
-        // Falls der aktuelle Lauf besser (schneller) war, aktualisiere die Bestzeit und speichere den Ghost-Lauf
+        // Aktualisiere Bestzeit und speichere den Ghost-Lauf, falls der aktuelle Lauf besser war
         if bestTime == 0 || runTime < bestTime {
             bestTime = runTime
             bestGhostFrames = currentGhostFrames
@@ -187,7 +190,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
             }
         }
         
-        // Zeige eine „Game Over“ Nachricht
+        // Zeige eine „Game Over“-Nachricht
         let gameOverLabel = SKLabelNode(fontNamed: "Helvetica-Bold")
         gameOverLabel.fontSize = 40
         gameOverLabel.fontColor = .red
@@ -210,5 +213,23 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
             newScene.scaleMode = self.scaleMode
             view.presentScene(newScene, transition: SKTransition.fade(withDuration: 1.0))
         }
+    }
+    
+    // MARK: - Settings-Update
+    @objc func updateGameSettings(_ notification: Notification) {
+        if let userInfo = notification.userInfo {
+            // Aktualisiere die Spielerfarbe
+            if let newColor = userInfo["playerColor"] as? UIColor {
+                player.color = newColor
+            }
+            // Aktualisiere die Spielgeschwindigkeit
+            if let newSpeed = userInfo["gameSpeed"] as? Double {
+                gameSpeed = CGFloat(newSpeed)
+            }
+        }
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 }
